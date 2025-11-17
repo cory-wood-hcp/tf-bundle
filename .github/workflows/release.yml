@@ -1,0 +1,74 @@
+name: Build and publish terraform-bundle package
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.2.3)'
+        required: true
+      name:
+        description: 'Release name (optional)'
+        required: false
+      body:
+        description: 'Release body/notes (optional)'
+        required: false
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get latest terraform-bundle asset URL
+        id: get_asset
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const resp = await github.rest.repos.getLatestRelease({ owner: 'hashicorp-services', repo: 'terraform-bundle-binary' });
+            const assets = resp.data.assets || [];
+            const asset = assets.find(a => /linux.*amd64|terraform_bundle_linux_amd64/i.test(a.name));
+            if (!asset) throw new Error('No linux amd64 asset found in hashicorp-services/terraform-bundle-binary releases');
+            return asset.browser_download_url;
+
+      - name: Download terraform-bundle binary
+        run: |
+          echo "Downloading terraform-bundle from ${{ steps.get_asset.outputs.result }}"
+          curl -L -o terraform-bundle "${{ steps.get_asset.outputs.result }}"
+          chmod +x terraform-bundle
+
+      - name: Show terraform-bundle version
+        run: |
+          ./terraform-bundle -version || true
+
+      - name: Run terraform-bundle package
+        run: |
+          ./terraform-bundle package -os=linux -arch=amd64 config.hcl
+
+      - name: Collect release artifacts
+        run: |
+          mkdir -p release-artifacts
+          # Move common archive/bundle patterns into release-artifacts if present
+          shopt -s nullglob || true
+          for f in *.zip *.tar.gz *.tgz terraform_bundle* bundle* *.tar; do
+            if [ -f "$f" ]; then
+              mv "$f" release-artifacts/ || true
+            fi
+          done
+          echo "Collected files:"
+          ls -la release-artifacts || true
+
+      - name: Create GitHub Release and upload artifacts
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.name || github.ref_name }}
+          body: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.body || '' }}
+          files: release-artifacts/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
