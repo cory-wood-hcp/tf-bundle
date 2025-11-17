@@ -7,9 +7,6 @@ terraform {
 # Define which provider plugins are to be included
 providers {
   # Include the newest "aws" provider version in the 1.0 series.
-  aws = {
-    versions = ["~> 5.0"]
-  }
 
   # Include both the newest 1.0 and 2.0 versions of the "google" provider.
   # Each item in these lists allows a distinct version to be added. If the
