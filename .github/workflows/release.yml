@@ -28,12 +28,39 @@ jobs:
 
       - name: Download terraform-bundle binary
         run: |
+          set -euo pipefail
           version="0.1.0"
-          curl -L -o terraform-bundle "https://github.com/hashicorp-services/terraform-bundle-binary/releases/download/${version}/terraform_bundle_linux_amd64_v0.15.5"
+          url="https://github.com/hashicorp-services/terraform-bundle-binary/releases/download/${version}/terraform_bundle_linux_amd64_v0.15.5"
+          echo "Downloading terraform-bundle from: $url"
+          # -f: fail on HTTP errors; -S: show error; -L: follow redirects; retry to reduce flakiness
+          curl -fSL --retry 3 --retry-delay 5 -o terraform-bundle "$url"
           chmod +x terraform-bundle
+
+      - name: Validate downloaded terraform-bundle
+        run: |
+          set -euo pipefail
+          if [ ! -s terraform-bundle ]; then
+            echo "Downloaded file is empty" >&2
+            exit 1
+          fi
+          # prefer 'file' output; on runners 'file' should exist
+          file_out=$(file --brief terraform-bundle || true)
+          echo "file: $file_out"
+          # Check for ELF (linux binary) or other executables (Mach-O for mac)
+          if echo "$file_out" | grep -Ei "elf|executable|mach-o" >/dev/null; then
+            echo "Downloaded terraform-bundle looks like a binary"
+          else
+            echo "Downloaded terraform-bundle does not look like a native binary. Printing head for debugging:" >&2
+            echo "---- BEGIN FILE HEAD ----" >&2
+            head -n 50 terraform-bundle >&2 || true
+            echo "---- END FILE HEAD ----" >&2
+            echo "If this is an HTML error page, the download URL may be incorrect or the release/tag does not exist." >&2
+            exit 1
+          fi
 
       - name: Show terraform-bundle version
         run: |
+          set -euo pipefail
           ./terraform-bundle -version || true
 
       - name: Run terraform-bundle package
