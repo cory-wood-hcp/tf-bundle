@@ -67,25 +67,51 @@ jobs:
         run: |
           ./terraform-bundle package -os=linux -arch=amd64 config.hcl
 
-      - name: Collect release artifacts
+      - name: Collect release artifacts (zip)
         run: |
+          set -euo pipefail
           mkdir -p release-artifacts
-          # Move common archive/bundle patterns into release-artifacts if present
+          # Move zip artifacts produced by terraform-bundle package
           shopt -s nullglob || true
-          for f in *.zip *.tar.gz *.tgz terraform_bundle* bundle* *.tar; do
+          moved=0
+          for f in *.zip; do
             if [ -f "$f" ]; then
               mv "$f" release-artifacts/ || true
+              moved=$((moved+1))
             fi
           done
-          echo "Collected files:"
-          ls -la release-artifacts || true
+          if [ "$moved" -eq 0 ]; then
+            echo "No .zip artifacts found after running terraform-bundle package" >&2
+            ls -la || true
+            exit 1
+          fi
+          echo "Collected zip files:" 
+          ls -la release-artifacts
+
+      - name: Determine release name
+        id: release_name
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # prefer inputs.name if provided, otherwise fall back to inputs.tag
+            if [ -n "${{ github.event.inputs.name }}" ]; then
+              echo "name=${{ github.event.inputs.name }}" >> $GITHUB_OUTPUT
+            else
+              echo "name=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+            fi
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+            echo "body=${{ github.event.inputs.body }}" >> $GITHUB_OUTPUT
+          else
+            echo "name=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "body=" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create GitHub Release and upload artifacts
         uses: ncipollo/release-action@v1
         with:
-          tag: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
-          name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.name || github.ref_name }}
-          body: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.body || '' }}
+          tag: ${{ steps.release_name.outputs.tag }}
+          name: ${{ steps.release_name.outputs.name }}
+          body: ${{ steps.release_name.outputs.body }}
           files: release-artifacts/**
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
