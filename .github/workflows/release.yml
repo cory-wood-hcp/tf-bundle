@@ -162,6 +162,6 @@ jobs:
           tag: ${{ steps.release_name.outputs.tag }}
           name: ${{ steps.release_name.outputs.name }}
           body: ${{ steps.release_name.outputs.body }}
-          files: release-artifacts/**
+          artifacts: "release-artifacts/terraform_*.zip,release-artifacts/config.hcl"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
