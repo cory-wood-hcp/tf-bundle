@@ -67,26 +67,76 @@ jobs:
         run: |
           ./terraform-bundle package -os=linux -arch=amd64 config.hcl
 
-      - name: Collect release artifacts (zip)
+      - name: Collect release artifacts (terraform_*.zip + config.hcl)
         run: |
           set -euo pipefail
+          # clean and recreate release-artifacts
+          rm -rf release-artifacts
           mkdir -p release-artifacts
-          # Move zip artifacts produced by terraform-bundle package
-          shopt -s nullglob || true
-          moved=0
-          for f in *.zip; do
-            if [ -f "$f" ]; then
-              mv "$f" release-artifacts/ || true
-              moved=$((moved+1))
-            fi
+
+          # Find any zip files starting with terraform_ produced anywhere in the workspace
+          IFS=$'\n'
+          found=()
+          while IFS= read -r -d '' f; do
+            found+=("$f")
+          done < <(find . -type f -name 'terraform_*.zip' -not -path './.git/*' -not -path './.github/*' -print0)
+
+          if [ ${#found[@]} -eq 0 ]; then
+            echo "No terraform_*.zip artifacts found after running terraform-bundle package" >&2
+            echo "Workspace files (depth 3) for debugging:" >&2
+            find . -maxdepth 3 -type f -ls >&2 || true
+            exit 1
+          fi
+
+          for f in "${found[@]}"; do
+            echo "Moving $f to release-artifacts/"
+            mv "$f" release-artifacts/ || true
           done
-          if [ "$moved" -eq 0 ]; then
-            echo "No .zip artifacts found after running terraform-bundle package" >&2
+
+          # Copy config.hcl into release-artifacts so it's included in the release
+          if [ -f config.hcl ]; then
+            cp config.hcl release-artifacts/config.hcl
+          else
+            echo "config.hcl not found in repo root" >&2
             ls -la || true
             exit 1
           fi
-          echo "Collected zip files:" 
+
+          echo "Collected files:" 
           ls -la release-artifacts
+
+      - name: Verify artifacts (print to logs)
+        run: |
+          set -euo pipefail
+          if [ ! -d release-artifacts ]; then
+            echo "release-artifacts missing" >&2
+            exit 1
+          fi
+          files=(release-artifacts/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No artifacts in release-artifacts" >&2
+            exit 1
+          fi
+          echo "Verification report (printing to logs)"
+          echo "Generated at: $(date -u)"
+          echo ""
+          for f in release-artifacts/*; do
+            if [ -f "$f" ]; then
+              echo "---"
+              echo "File: $(basename "$f")"
+              echo "Size: $(stat -c%s "$f" 2>/dev/null || stat -f%z "$f") bytes"
+              echo "SHA256: $(sha256sum "$f" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$f" | awk '{print $1}')"
+              echo "Contents:"
+              case "$f" in
+                *.zip) unzip -l "$f" || true ;;
+                *.tar.gz|*.tgz) tar -tzf "$f" || true ;;
+                *.tar) tar -tf "$f" || true ;;
+                *) echo "(binary or unknown format)" ;;
+              esac
+              echo ""
+            fi
+          done
+          echo "Verification complete. (report printed above)"
 
       - name: Determine release name
         id: release_name
